@@ -1,0 +1,98 @@
+"""
+=====================================================================
+ PYTHON GARBAGE COLLECTION: AUTOMATIC MECHANISM AND MANUAL CONTROL
+ Experiments with the gc module
+=====================================================================
+IN PLAIN ENGLISH:
+  Python cleans up memory in TWO ways.
+  1) Reference counting: every object counts how many names point to
+     it. The moment the count hits zero, it is thrown away at once.
+  2) The cyclic garbage collector (the gc module): finds groups of
+     objects that only point to EACH OTHER (a cycle). Their counts
+     never reach zero, so reference counting alone would leak them.
+     gc runs now and then, finds such islands and removes them.
+  The gc module lets us watch, tune, pause and trigger step 2 by hand.
+=====================================================================
+"""
+
+import gc
+import sys
+import time
+import weakref
+import tracemalloc
+
+
+def section(title):
+    print(f"\n{'=' * 8} {title} {'=' * 8}")
+
+
+class Node:
+    """A tiny object that announces when it is destroyed."""
+
+    def __init__(self, name):
+        self.name = name
+        self.other = None
+
+    def __del__(self):
+        print(f"   [__del__] {self.name} destroyed")
+
+
+# ---------------------------------------------------------------------
+# EXPERIMENT 1: reference counting frees objects instantly
+# ---------------------------------------------------------------------
+def exp1_reference_counting():
+    section("1. Reference counting: instant cleanup")
+    a = Node("A")
+    print("refcount of A (name + argument of getrefcount):", sys.getrefcount(a))
+    b = a                                   # a second name for the same object
+    print("after b = a, refcount:", sys.getrefcount(a))
+    del a
+    print("after del a, refcount:", sys.getrefcount(b), "(object still alive)")
+    print("deleting the last name...")
+    del b                                   # count hits zero -> __del__ runs NOW
+    print("(destroyed immediately, no gc needed)")
+
+
+# ---------------------------------------------------------------------
+# EXPERIMENT 2: a reference CYCLE defeats reference counting
+# ---------------------------------------------------------------------
+def exp2_cycle_and_manual_collect():
+    section("2. Reference cycle leaks until gc.collect()")
+    gc.collect()                            # start from a clean slate
+    gc.disable()                            # pause automatic collection
+    print("gc enabled?", gc.isenabled())
+    x, y = Node("X"), Node("Y")
+    x.other, y.other = y, x                 # X -> Y -> X (a cycle)
+    del x, y                                # no outside names remain...
+    print("deleted both names. Nothing printed => still in memory (leaked)")
+    found = gc.collect()                    # manual collection
+    print(f"gc.collect() returned {found} (unreachable objects found)")
+    gc.enable()
+
+
+# ---------------------------------------------------------------------
+# EXPERIMENT 3: thresholds, counts and statistics
+# ---------------------------------------------------------------------
+def exp3_thresholds_counts_stats():
+    section("3. Thresholds, counts and statistics")
+    print("get_threshold():", gc.get_threshold(),
+          " (gen0 trigger, gen1 trigger, gen2 trigger)")
+    print("get_count()    :", gc.get_count(),
+          " (allocations - deallocations, per generation)")
+    print("get_stats()    : one dict per generation, e.g. generation 0:")
+    s = gc.get_stats()[0]
+    print("   collections =", s["collections"], " collected =", s["collected"],
+          " uncollectable =", s["uncollectable"])
+
+
+# ---------------------------------------------------------------------
+# EXPERIMENT 4: watch AUTOMATIC collections with a callback
+# ---------------------------------------------------------------------
+def exp4_automatic_trigger():
+    section("4. Automatic collection triggered by the threshold")
+    events = []
+
+    def watcher(phase, info):               # gc calls this before/after a run
+        if phase == "stop":
+            events.append(info["collected"])
+            print(f"   [watcher] collected {info['collected']} objects")
